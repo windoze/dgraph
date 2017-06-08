@@ -20,6 +20,7 @@ package worker
 import (
 	"context"
 	"encoding/binary"
+	"sync"
 
 	"golang.org/x/net/trace"
 
@@ -144,10 +145,34 @@ func proposeUid(ctx context.Context, xid string, uid uint64) error {
 type xidsMap struct {
 	x.SafeMutex
 	// replace with lru cache later
-	uid map[string]uint64
+	uid   map[string]uint64
+	locks map[string]*sync.WaitGroup
+}
+
+func (xm *xidsMap) lock(xid string) {
+	xm.Lock()
+	defer xm.Unlock()
+
+	_, ok := xm.locks[xid]
+	x.AssertTruef(!ok, "Lock shouldn't already be present: %s", xid)
+
+	w := &sync.WaitGroup{}
+	w.Add(1)
+	xm.locks[xid] = w
+}
+
+func (xm *xidsMap) getWaiter(xid string) *sync.WaitGroup {
+	xm.RLock()
+	defer xm.RUnlock()
+	return xm.locks[xid]
 }
 
 func (xm *xidsMap) getUid(xid string) (uint64, error) {
+	w := xm.getWaiter(xid)
+	if w != nil {
+		w.Wait() // wait for this xid to be assigned.
+	}
+
 	xm.RLock()
 	if uid, has := xm.uid[xid]; has && uid != 0 {
 		xm.RUnlock()
@@ -191,10 +216,17 @@ func (xm *xidsMap) setUid(xid string, uid uint64) {
 		xm.clear()
 	}
 	xm.uid[xid] = uid
+
+	// Release the lock.
+	w, ok := xm.locks[xid]
+	x.AssertTruef(ok, "Xid should have been locked: %s", xid)
+	w.Done()
+	delete(xm.locks, xid)
 }
 
 func (xm *xidsMap) clear() {
 	xm.AssertLock()
+
 	for xid := range xm.uid {
 		delete(xm.uid, xid)
 	}

@@ -153,6 +153,7 @@ OUTER:
 			continue
 		}
 		for _, xid := range xids {
+			xidCache.lock(xid)
 			mutations.Edges = append(mutations.Edges, &protos.DirectedEdge{
 				Entity:    startId,
 				Attr:      "_xid_",
@@ -162,16 +163,19 @@ OUTER:
 			})
 			startId++
 		}
-		if err = proposeAndWait(req.ctx, mutations); err != nil {
-			req.ch <- err
-			continue
-		}
-		for _, edge := range mutations.Edges {
-			xid := string(edge.Value)
-			req.out.XidToUid[xid] = edge.Entity
-			xidCache.setUid(xid, edge.Entity)
-		}
-		req.ch <- nil
+
+		go func(req xidsReq) {
+			if err = proposeAndWait(req.ctx, mutations); err != nil {
+				req.ch <- err
+				return
+			}
+			for _, edge := range mutations.Edges {
+				xid := string(edge.Value)
+				req.out.XidToUid[xid] = edge.Entity
+				xidCache.setUid(xid, edge.Entity)
+			}
+			req.ch <- nil
+		}(req)
 	}
 }
 
