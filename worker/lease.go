@@ -46,6 +46,7 @@ func init() {
 	leaseKey = x.DataKey(LeasePredicate, 1)
 	xidCache = new(xidsMap)
 	xidCache.uid = make(map[string]uint64)
+	xidCache.locks = make(map[string]*sync.WaitGroup)
 
 	leasemgr = new(leaseManager)
 	leasemgr.elog = trace.NewEventLog("Lease Manager", "")
