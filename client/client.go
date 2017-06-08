@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -269,6 +270,14 @@ func (batch *BatchMutation) AddMutation(nq protos.NQuad, op Op) error {
 		((nq.ObjectType == int32(types.DefaultID) && nq.ObjectValue.GetDefaultVal() == "*") ||
 			(nq.ObjectType == int32(types.StringID) && nq.ObjectValue.GetStrVal() == "*")) {
 		return x.Errorf("Cannot set the value as '*'")
+	}
+	if _, err := strconv.ParseUint(nq.Subject, 0, 64); err == nil {
+		nq.Subject = "_:" + nq.Subject
+	}
+	if len(nq.ObjectId) > 0 {
+		if _, err := strconv.ParseUint(nq.ObjectId, 0, 64); err == nil {
+			nq.ObjectId = "_:" + nq.ObjectId
+		}
 	}
 	batch.nquads <- nquadOp{nq: nq, op: op}
 	atomic.AddUint64(&batch.rdfs, 1)
