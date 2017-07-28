@@ -385,6 +385,7 @@ func (l *List) updateMutationLayer(mpost *protos.Posting) bool {
 	}
 
 	if mpost.Op == Set {
+		fmt.Printf("mpost: %+v. psame: %v. uidfound: %v\n", mpost, psame, uidFound)
 		if psame {
 			return false
 		}
