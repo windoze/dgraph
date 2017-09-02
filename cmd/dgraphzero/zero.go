@@ -30,12 +30,17 @@ import (
 
 var (
 	emptyMembershipUpdate protos.MembershipUpdate
-	ErrInvalidId          = errors.New("Invalid server id")
-	ErrInvalidAddress     = errors.New("Invalid address")
+	errInvalidId          = errors.New("Invalid server id")
+	errInvalidAddress     = errors.New("Invalid address")
+	errUnknownMember      = errors.New("Unknown cluster member")
+	errInvalidQuery       = errors.New("Invalid query")
+	errInternalError      = errors.New("Internal server error")
 )
 
 type Group struct {
-	idMap map[uint64]protos.Membership
+	idMap   map[uint64]protos.Membership
+	tablets []protos.Tablet
+	size    int64 // Sum of all tablet sizes.
 }
 
 type Server struct {
@@ -43,7 +48,6 @@ type Server struct {
 	wal *raftwal.Wal
 
 	NumReplicas int
-	tablets     []protos.Tablet
 	groupMap    map[uint32]*Group
 	nextGroup   uint32
 }
@@ -59,10 +63,10 @@ func (s *Server) Connect(ctx context.Context,
 		return &emptyMembershipUpdate, ctx.Err()
 	}
 	if m.Id == 0 {
-		return u, ErrInvalidId
+		return u, errInvalidId
 	}
 	if len(m.Addr) == 0 {
-		return u, ErrInvalidAddress
+		return u, errInvalidAddress
 	}
 	// Create a connection and check validity of the address by doing an Echo.
 	pl := conn.Get().Connect(m.Addr)
@@ -118,7 +122,6 @@ func (s *Server) Connect(ctx context.Context,
 }
 
 func (s *Server) hasMember(ms *protos.Membership) bool {
-	s.AssertRLock()
 	group, has := s.groupMap[ms.GroupId]
 	if !has {
 		return false
@@ -128,39 +131,48 @@ func (s *Server) hasMember(ms *protos.Membership) bool {
 }
 
 func (s *Server) ShouldServe(
-	ctx context.Context, query *protos.MembershipQuery) (resp *protos.Payload, err error) {
+	ctx context.Context, query *protos.MembershipQuery) (resp *protos.Tablet, err error) {
 
-	s.RLock()
-	// First check if the caller is in the member list.
-	if !s.hasMember(query.GetMember()) {
-		s.RUnlock()
-		resp.Data = []byte("wrong")
-		return
+	if len(query.Tablet.Predicate) == 0 {
+		return resp, errInvalidQuery
 	}
 
-	tablet := query.GetTablet()
+	s.Lock()
+	defer s.Unlock()
+
+	// First check if the caller is in the member list.
+	if !s.hasMember(query.Member) {
+		return resp, errUnknownMember
+	}
 	var tgroup uint32 // group serving tablet.
-	for _, t := range s.tablets {
+	for gid, group := range s.groupMap {
 		// Slightly slow, but happens infrequently enough that it's OK.
-		if t.Predicate == tablet.Predicate {
-			tgroup = t.GroupId
+		for _, t := range group.tablets {
+			if t.Predicate == query.Tablet.Predicate {
+				tgroup = gid
+			}
 		}
 	}
-	s.RUnlock()
 
 	if tgroup == 0 {
-		// Set the tablet to be served by this server.
-		return
+		// Set the tablet to be served by this server's group.
+		tablet := *query.Tablet
+		tablet.GroupId = query.Member.GroupId
+		group, has := s.groupMap[tgroup]
+		if !has {
+			return resp, errInternalError
+		}
+		group.tablets = append(group.tablets, tablet)
+		// TODO: Also propose and tell cluster about this.
+		return &tablet, nil
 	}
 
-	// Someone is serving this tablet.
-	if tgroup == query.Member.GroupId {
-		// Tablet is being served by the caller.
-		resp.Data = []byte("ok")
-	} else {
-		resp.Data = []byte("not")
-	}
-	return
+	// Someone is serving this tablet. Could be the caller as well.
+	// The caller should compare the returned group against the group it holds to check who's
+	// serving.
+	tablet := *query.Tablet
+	tablet.GroupId = tgroup
+	return &tablet, nil
 }
 
 func (s *Server) Update(

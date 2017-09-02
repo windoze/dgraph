@@ -42,7 +42,9 @@ var (
 		"Use 0.0.0.0 instead of localhost to bind to all addresses on local machine.")
 	myAddr = flag.String("my", "",
 		"addr:port of this server, so other Dgraph servers can talk to this.")
-	port = flag.Int("port", 8888, "Port to run Dgraph zero on.")
+	port        = flag.Int("port", 8888, "Port to run Dgraph zero on.")
+	numReplicas = flag.Int("replicas", 1, "How many replicas to run per data shard."+
+		" The count includes the original shard.")
 )
 
 func setupListener(addr string, port int) (listener net.Listener, err error) {
@@ -57,7 +59,8 @@ func serveGRPC(l net.Listener, wg *sync.WaitGroup) {
 		grpc.MaxRecvMsgSize(x.GrpcMaxSize),
 		grpc.MaxSendMsgSize(x.GrpcMaxSize),
 		grpc.MaxConcurrentStreams(1000))
-	protos.RegisterZeroServer(s, &Server{})
+	server := &Server{NumReplicas: *numReplicas}
+	protos.RegisterZeroServer(s, server)
 	err := s.Serve(l)
 	log.Printf("gRpc server stopped : %s", err.Error())
 	s.GracefulStop()
@@ -85,6 +88,7 @@ func serveHTTP(l net.Listener, wg *sync.WaitGroup) {
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	flag.Parse()
 
 	grpc.EnableTracing = false
 	addr := "localhost"

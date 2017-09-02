@@ -62,6 +62,6 @@ service Worker {
 
 service Zero {
   rpc Connect (Membership) returns (MembershipUpdate) {}
-  rpc ShouldServe (MembershipQuery) returns (Payload) {}
+  rpc ShouldServe (MembershipQuery) returns (Tablet) {}
   rpc Update (Membership) returns (MembershipUpdate) {}
 }
