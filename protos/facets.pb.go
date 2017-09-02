@@ -47,6 +47,7 @@
 		RaftContext
 		Membership
 		MembershipUpdate
+		MembershipQuery
 		Tablet
 		DirectedEdge
 		Mutations

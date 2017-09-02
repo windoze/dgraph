@@ -102,7 +102,11 @@ message MembershipUpdate {
 
 	bool redirect = 6;
 	string redirect_addr = 7;
+}
 
+message MembershipQuery {
+  Membership member = 1;
+  Tablet tablet = 2;
 }
 
 message Tablet {
