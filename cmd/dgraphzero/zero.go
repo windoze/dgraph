@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/net/context"
 
+	"github.com/dgraph-io/dgraph/conn"
 	"github.com/dgraph-io/dgraph/protos"
 	"github.com/dgraph-io/dgraph/raftwal"
 	"github.com/dgraph-io/dgraph/x"
@@ -34,7 +35,7 @@ var (
 )
 
 type Group struct {
-	idMap map[uint64]Membership
+	idMap map[uint64]protos.Membership
 }
 
 type Server struct {
@@ -42,17 +43,18 @@ type Server struct {
 	wal *raftwal.Wal
 
 	NumReplicas int
-	tablets     []Tablet
+	tablets     []protos.Tablet
 	groupMap    map[uint32]*Group
 	nextGroup   uint32
 }
 
 func (s *Server) createMembershipUpdate() protos.MembershipUpdate {
+	return protos.MembershipUpdate{}
 }
 
 // Connect is used to connect the very first time with group zero.
 func (s *Server) Connect(ctx context.Context,
-	m *protos.Membership) (u protos.MembershipUpdate, err error) {
+	m *protos.Membership) (u *protos.MembershipUpdate, err error) {
 	if ctx.Err() != nil {
 		return &emptyMembershipUpdate, ctx.Err()
 	}
@@ -63,14 +65,22 @@ func (s *Server) Connect(ctx context.Context,
 		return u, ErrInvalidAddress
 	}
 	// Create a connection and check validity of the address by doing an Echo.
+	pl := conn.Get().Connect(m.Addr)
+	defer conn.Get().Release(pl)
+
+	if err := conn.TestConnection(pl); err != nil {
+		// TODO: How do we delete this connection pool?
+		return u, err
+	}
+	x.Printf("Connection successful to addr: %s", m.Addr)
 
 	s.Lock()
 	defer s.Unlock()
 	if m.GroupId > 0 {
-		group, has := groupMap[m.GroupId]
+		group, has := s.groupMap[m.GroupId]
 		if !has {
 			// We don't have this group. Add the server to this group.
-			group = &Group{idMap: make(map[uint64]Membership)}
+			group = &Group{idMap: make(map[uint64]protos.Membership)}
 			group.idMap[m.Id] = *m
 			s.groupMap[m.GroupId] = group
 			// TODO: Propose these updates to Raft before applying.
@@ -101,7 +111,7 @@ func (s *Server) Connect(ctx context.Context,
 	// We either don't have any groups, or don't have any groups which need another member.
 	m.GroupId = s.nextGroup
 	s.nextGroup++
-	group = &Group{idMap: make(map[uint64]Membership)}
+	group := &Group{idMap: make(map[uint64]protos.Membership)}
 	group.idMap[m.Id] = *m
 	s.groupMap[m.GroupId] = group
 	return
@@ -109,12 +119,12 @@ func (s *Server) Connect(ctx context.Context,
 
 func (s *Server) hasMember(ms *protos.Membership) bool {
 	s.AssertRLock()
-	for _, m := range s.members {
-		if m.Id == ms.Id && m.GroupId == ms.GroupId {
-			return true
-		}
+	group, has := s.groupMap[ms.GroupId]
+	if !has {
+		return false
 	}
-	return false
+	_, has = group.idMap[ms.Id]
+	return has
 }
 
 func (s *Server) ShouldServe(
@@ -122,51 +132,33 @@ func (s *Server) ShouldServe(
 
 	s.RLock()
 	// First check if the caller is in the member list.
-	var found bool
-	for _, m := range members {
-		qm := query.GetMember()
-		if m.Id == qm.Id {
-			// Id matches, do the rest match as well?
-			if m.GroupId != qm.GroupId {
-				// Error with the server.
-				resp.Data = []byte("wrong")
-				s.RUnlock()
-				return
-			}
-			// Both id and group id match.
-			found = true
-		}
-	}
-	if !found {
+	if !s.hasMember(query.GetMember()) {
 		s.RUnlock()
 		resp.Data = []byte("wrong")
 		return
 	}
 
-	var group uint32
+	tablet := query.GetTablet()
+	var tgroup uint32 // group serving tablet.
 	for _, t := range s.tablets {
 		// Slightly slow, but happens infrequently enough that it's OK.
 		if t.Predicate == tablet.Predicate {
-			group = t.GroupId
+			tgroup = t.GroupId
 		}
 	}
 	s.RUnlock()
 
-	if group > 0 {
-		// Someone is serving this tablet.
-		if group == tablet.GetGroupId() {
-			// Tablet is being served by the caller.
-			resp.Data = []byte("ok")
-		} else {
-			resp.Data = []byte("not")
-		}
+	if tgroup == 0 {
+		// Set the tablet to be served by this server.
 		return
 	}
 
-	// No one is serving this tablet.
-	if tablet.GetGroupId() == 0 {
-		// The caller has no group assigned.
+	// Someone is serving this tablet.
+	if tgroup == query.Member.GroupId {
+		// Tablet is being served by the caller.
 		resp.Data = []byte("ok")
+	} else {
+		resp.Data = []byte("not")
 	}
 	return
 }
