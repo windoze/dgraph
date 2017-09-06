@@ -2,61 +2,6 @@
 // source: facets.proto
 // DO NOT EDIT!
 
-/*
-	Package protos is a generated protocol buffer package.
-
-	It is generated from these files:
-		facets.proto
-		graphresponse.proto
-		payload.proto
-		schema.proto
-		task.proto
-		types.proto
-
-	It has these top-level messages:
-		Facet
-		Param
-		Facets
-		FacetsList
-		Function
-		FilterTree
-		Num
-		AssignedIds
-		NQuad
-		Value
-		Mutation
-		Request
-		Latency
-		Property
-		Node
-		Response
-		Check
-		Version
-		Payload
-		ExportPayload
-		SchemaRequest
-		SchemaResult
-		SchemaNode
-		SchemaUpdate
-		List
-		TaskValue
-		Query
-		ValueList
-		Result
-		SortMessage
-		SortResult
-		RaftContext
-		Membership
-		MembershipUpdate
-		DirectedEdge
-		Mutations
-		Proposal
-		KV
-		KC
-		GroupKeys
-		Posting
-		PostingList
-*/
 package protos
 
 import proto "github.com/golang/protobuf/proto"
@@ -69,12 +14,6 @@ import io "io"
 var _ = proto.Marshal
 var _ = fmt.Errorf
 var _ = math.Inf
-
-// This is a compile-time assertion to ensure that this generated file
-// is compatible with the proto package it is being compiled against.
-// A compilation error at this line likely means your copy of the
-// proto package needs to be updated.
-const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
 type Facet_ValType int32
 
